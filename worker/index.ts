@@ -178,8 +178,8 @@ async function handleCodeSubmission(
     }).eq("code", code);
 
     await sendDMs(spaceId, [
-      "hey — got your code. i'm cynna, your shared memory bot.",
-      "what should i call you?",
+      "hey 💛 i'm cynna — think of me as a little memory jar for you and your person.",
+      "before i set things up, what's your name?",
     ]);
     return true;
   }
