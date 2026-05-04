@@ -1,10 +1,11 @@
 import "server-only";
 import { supabase } from "./supabase";
+import { sendMessage } from "./linq";
+import { compose } from "./voice";
 
 /**
  * Substrate for proactive (Poke-style) messaging.
- * Day 1: handlers are no-op stubs that just mark fired_at.
- * Day 2: fill `kindHandlers` with real `linq.sendMessage` calls.
+ * Handlers compose a message in voice (see voice.ts) and send via Linq.
  */
 
 export type TriggerKind = "daily_recall" | "weekly_date_idea";
@@ -48,13 +49,70 @@ export function nextFridayFire(from: Date = new Date()): Date {
 
 type Handler = (coupleId: string, payload: Record<string, unknown>) => Promise<void>;
 
+/** Pull names + a recent surfaceable save. Tiny v1 — refine as we learn. */
+async function buildDailyRecallContext(coupleId: string): Promise<string | null> {
+  const { data: couple } = await supabase
+    .from("couples")
+    .select("partner_a, partner_b")
+    .eq("id", coupleId)
+    .single();
+  if (!couple) return null;
+
+  const { data: save } = await supabase
+    .from("saves")
+    .select("sender_handle, kind, raw_text, og_title, transcript, created_at")
+    .eq("couple_id", coupleId)
+    .order("created_at", { ascending: false })
+    .range(3, 3) // skip the most recent few; recall is for older stuff
+    .maybeSingle();
+  if (!save) return null;
+
+  const summary =
+    save.og_title ?? save.transcript ?? save.raw_text ?? `a ${save.kind}`;
+  const ageDays = Math.max(
+    1,
+    Math.round((Date.now() - new Date(save.created_at).getTime()) / 86_400_000)
+  );
+  return `Couple: ${couple.partner_a} & ${couple.partner_b}. Save from ${ageDays} days ago: ${save.sender_handle} sent "${summary}".`;
+}
+
+async function buildWeeklyDateContext(coupleId: string): Promise<string | null> {
+  const { data: couple } = await supabase
+    .from("couples")
+    .select("partner_a, partner_b")
+    .eq("id", coupleId)
+    .single();
+  if (!couple) return null;
+
+  const { data: saves } = await supabase
+    .from("saves")
+    .select("sender_handle, kind, raw_text, og_title, source_url, created_at")
+    .eq("couple_id", coupleId)
+    .in("kind", ["link", "text"])
+    .order("created_at", { ascending: false })
+    .limit(8);
+  if (!saves || saves.length === 0) return null;
+
+  const list = saves
+    .map((s) => `- ${s.sender_handle}: ${s.og_title ?? s.raw_text ?? s.source_url}`)
+    .join("\n");
+  return `Couple: ${couple.partner_a} & ${couple.partner_b}. Recent saves to choose from:\n${list}`;
+}
+
 const kindHandlers: Record<TriggerKind, Handler> = {
-  // Day-1 stubs. Day-2: pick a save, format a friendly message, call linq.sendMessage.
   daily_recall: async (coupleId) => {
-    console.log("[scheduler] (stub) daily_recall for", coupleId);
+    const ctx = await buildDailyRecallContext(coupleId);
+    if (!ctx) return;
+    const reply = await compose("daily_recall", ctx);
+    if (!reply) return;
+    await sendMessage(coupleId, [{ type: "text", value: reply }]);
   },
   weekly_date_idea: async (coupleId) => {
-    console.log("[scheduler] (stub) weekly_date_idea for", coupleId);
+    const ctx = await buildWeeklyDateContext(coupleId);
+    if (!ctx) return;
+    const reply = await compose("weekly_date_idea", ctx);
+    if (!reply) return;
+    await sendMessage(coupleId, [{ type: "text", value: reply }]);
   },
 };
 

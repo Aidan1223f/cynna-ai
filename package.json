@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "voice:eval": "tsx scripts/voice-eval.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
