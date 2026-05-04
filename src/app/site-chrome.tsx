@@ -1,16 +1,31 @@
+import Image from "next/image";
 import Link from "next/link";
+
+function LogoMark({ size }: { size: number }) {
+  return (
+    <span
+      aria-hidden
+      className="relative inline-block overflow-hidden rounded-full surface-cream"
+      style={{ width: size, height: size }}
+    >
+      <Image
+        src="/logo-mark.png"
+        alt=""
+        fill
+        sizes={`${size}px`}
+        preload
+        className="scale-[1.42] object-cover object-top"
+      />
+    </span>
+  );
+}
 
 export function SiteHeader() {
   return (
     <header className="w-full">
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-5">
         <Link href="/" className="flex items-center gap-2">
-          <span
-            aria-hidden
-            className="grid size-8 place-items-center rounded-lg surface-cream"
-          >
-            <span className="size-3 rounded-full bg-[var(--color-leaf)]" />
-          </span>
+          <LogoMark size={32} />
           <span className="font-display text-[22px] leading-none tracking-tight text-[var(--color-ink)]">
             love-send
           </span>
@@ -44,12 +59,7 @@ export function SiteFooter() {
       <div className="mx-auto grid max-w-6xl gap-8 px-5 py-12 sm:grid-cols-4">
         <div className="sm:col-span-2">
           <div className="flex items-center gap-2">
-            <span
-              aria-hidden
-              className="grid size-8 place-items-center rounded-lg surface-cream"
-            >
-              <span className="size-3 rounded-full bg-[var(--color-leaf)]" />
-            </span>
+            <LogoMark size={32} />
             <span className="font-display text-[22px] leading-none tracking-tight">
               love-send
             </span>
