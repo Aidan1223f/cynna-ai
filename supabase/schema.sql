@@ -13,21 +13,33 @@ create table if not exists couples (
   created_at timestamptz default now()
 );
 
--- Pending pairings: created when the onboarding form is submitted, consumed
--- when both partners text their PAIR-XXXX code to the bot. The worker
--- promotes a complete pairing into a couples row + iMessage group.
+-- Pairings: created when the onboarding form is submitted. The worker walks
+-- through a conversational state machine (DM with each partner) before
+-- creating the couple row + iMessage group.
 create table if not exists pairings (
   code text primary key,
   partner_a text not null,
-  partner_b text not null,
-  partner_a_confirmed_at timestamptz,
-  partner_b_confirmed_at timestamptz,
+  partner_b text,
+  status text not null default 'awaiting_initiator'
+    check (status in (
+      'awaiting_initiator',
+      'asking_initiator_name',
+      'asking_initiator_vibe',
+      'awaiting_partner',
+      'asking_partner_name',
+      'asking_partner_vibe',
+      'complete',
+      'expired'
+    )),
+  initiator_dm_space_id text,
+  partner_dm_space_id text,
+  data jsonb not null default '{}',
   couple_id text references couples(id) on delete set null,
   created_at timestamptz default now(),
   expires_at timestamptz not null
 );
-create index if not exists pairings_partner_a_idx on pairings (partner_a) where partner_a_confirmed_at is null;
-create index if not exists pairings_partner_b_idx on pairings (partner_b) where partner_b_confirmed_at is null;
+create index if not exists pairings_partner_a_idx on pairings (partner_a) where status != 'complete';
+create index if not exists pairings_status_idx on pairings (status) where status not in ('complete', 'expired');
 
 create table if not exists saves (
   id uuid primary key default gen_random_uuid(),

@@ -1,18 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
+import { useMemo, useRef, useState } from "react";
 
-type Step = "yourName" | "yourPhone" | "partnerName" | "partnerPhone" | "review";
 type ApiResult = { code: string; botNumber: string; expiresInSeconds: number };
-
-const STEP_ORDER: Step[] = [
-  "yourName",
-  "yourPhone",
-  "partnerName",
-  "partnerPhone",
-  "review",
-];
 
 const E164 = /^\+[1-9]\d{6,14}$/;
 
@@ -31,73 +21,26 @@ function prettyPhone(e164: string): string {
 }
 
 export function InvitationPortal() {
-  const [step, setStep] = useState<Step>("yourName");
-  const [yourName, setYourName] = useState("");
-  const [yourPhone, setYourPhone] = useState("");
-  const [partnerName, setPartnerName] = useState("");
-  const [partnerPhone, setPartnerPhone] = useState("");
-
+  const [phone, setPhone] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ApiResult | null>(null);
-
+  const [copied, setCopied] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, [step]);
 
-  const stepIndex = STEP_ORDER.indexOf(step);
-  const progress = ((stepIndex + 1) / STEP_ORDER.length) * 100;
+  const phoneE164 = useMemo(() => normalizePhone(phone), [phone]);
+  const phoneOk = E164.test(phoneE164);
 
-  const yourPhoneE164 = useMemo(() => normalizePhone(yourPhone), [yourPhone]);
-  const partnerPhoneE164 = useMemo(
-    () => normalizePhone(partnerPhone),
-    [partnerPhone],
-  );
-
-  const yourPhoneOk = E164.test(yourPhoneE164);
-  const partnerPhoneOk = E164.test(partnerPhoneE164);
-  const samePhone =
-    yourPhoneOk && partnerPhoneOk && yourPhoneE164 === partnerPhoneE164;
-
-  function canAdvance(): boolean {
-    switch (step) {
-      case "yourName":
-        return yourName.trim().length >= 1;
-      case "yourPhone":
-        return yourPhoneOk;
-      case "partnerName":
-        return partnerName.trim().length >= 1;
-      case "partnerPhone":
-        return partnerPhoneOk && !samePhone;
-      case "review":
-        return true;
-    }
-  }
-
-  function next() {
-    setError(null);
-    if (!canAdvance()) return;
-    const nextStep = STEP_ORDER[stepIndex + 1];
-    if (nextStep) setStep(nextStep);
-  }
-  function back() {
-    setError(null);
-    const prev = STEP_ORDER[stepIndex - 1];
-    if (prev) setStep(prev);
-  }
-
-  async function submit() {
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!phoneOk) return;
     setSubmitting(true);
     setError(null);
     try {
       const res = await fetch("/api/onboarding/start", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          partnerA: yourPhoneE164,
-          partnerB: partnerPhoneE164,
-        }),
+        body: JSON.stringify({ phone: phoneE164 }),
       });
       const json = await res.json();
       if (!res.ok) {
@@ -109,233 +52,109 @@ export function InvitationPortal() {
       } else {
         setResult(json as ApiResult);
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setSubmitting(false);
     }
   }
 
-  function onFormSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (step === "review") {
-      submit();
-    } else {
-      next();
-    }
+  async function copyCode() {
+    if (!result) return;
+    await navigator.clipboard.writeText(result.code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
   }
 
-  // ── Success card — show pairing code ──────────────────────────────────────
+  // ── Code screen ───────────────────────────────────────────────────────────
   if (result) {
+    const smsUrl = `sms:${result.botNumber}&body=${encodeURIComponent(result.code)}`;
+
     return (
-      <div className="w-full max-w-[460px]">
+      <div className="w-full max-w-[420px]">
         <div className="surface-cream rounded-3xl p-6 sm:p-8">
-          <div className="mb-5 flex items-center gap-2">
-            <span className="grid size-8 place-items-center rounded-full bg-[var(--color-leaf)] text-white">
-              ✓
-            </span>
-            <span className="font-display text-[22px] leading-none">
-              One last step.
-            </span>
+          {/* Mock bot bubble */}
+          <div className="mb-5 flex justify-start">
+            <div className="max-w-[85%] rounded-2xl rounded-bl-md bg-[var(--color-cream-3)] px-3.5 py-2.5 text-[14.5px] text-[var(--color-ink)]">
+              hey, just got your number &mdash; text me this code to get started
+            </div>
           </div>
 
-          <p className="text-[15px] leading-relaxed text-[var(--color-ink-soft)]">
-            Both{" "}
-            <span className="font-medium text-[var(--color-ink)]">
-              {yourName}
-            </span>{" "}
-            and{" "}
-            <span className="font-medium text-[var(--color-ink)]">
-              {partnerName}
-            </span>{" "}
-            need to text this code to{" "}
-            <span className="font-medium text-[var(--color-ink)]">
-              {result.botNumber || "the bot"}
-            </span>{" "}
-            from your iPhones:
-          </p>
-
-          <div className="mt-5 rounded-xl border border-black/10 bg-white px-6 py-5 text-center">
+          {/* Code block */}
+          <div className="rounded-xl border border-black/10 bg-white px-6 py-5 text-center">
             <div className="text-[12px] uppercase tracking-wider text-[var(--color-mute)]">
-              Your pairing code
+              your code
             </div>
             <div className="mt-2 font-mono text-[32px] tracking-[0.15em] text-[var(--color-ink)]">
               {result.code}
             </div>
+            <button
+              onClick={copyCode}
+              aria-label="Copy pairing code"
+              className="mt-2 text-[12px] text-[var(--color-mute)] underline decoration-black/20 underline-offset-4 hover:text-[var(--color-ink)]"
+            >
+              <span aria-live="polite">{copied ? "copied" : "copy"}</span>
+            </button>
           </div>
 
-          <p className="mt-5 text-[13px] leading-relaxed text-[var(--color-mute)]">
-            Once we&rsquo;ve heard from both of you, we&rsquo;ll create your
-            shared iMessage thread and your dashboard automatically. This code
-            expires in {Math.round(result.expiresInSeconds / 60)} minutes.
+          {/* Primary CTA — opens iMessage */}
+          <a
+            href={smsUrl}
+            className="btn-depth-dark mt-5 flex w-full items-center justify-center text-[15px]"
+          >
+            Open iMessage
+          </a>
+
+          <p className="mt-4 text-center text-[12.5px] leading-relaxed text-[var(--color-mute)]">
+            Or text{" "}
+            <span className="font-medium text-[var(--color-ink)]">
+              {result.botNumber || "the bot"}
+            </span>{" "}
+            manually. Code expires in {Math.round(result.expiresInSeconds / 60)} min.
           </p>
-
-          <div className="mt-6 flex gap-2">
-            <Link href="/" className="btn-depth flex-1">
-              Done
-            </Link>
-          </div>
         </div>
-
-        <p className="mt-5 px-2 text-center text-[12.5px] leading-relaxed text-[var(--color-mute)]">
-          Make sure iMessage is enabled on both phones. The code is
-          case-insensitive &mdash; just text it as-is.
-        </p>
       </div>
     );
   }
 
-  // ── Wizard ────────────────────────────────────────────────────────────────
+  // ── Phone entry ───────────────────────────────────────────────────────────
   return (
-    <div className="w-full max-w-[460px]">
+    <div className="w-full max-w-[420px]">
       <div className="mb-6 text-center">
-        <Link href="/" className="pill-badge mb-5 inline-flex">
-          Setting up your shared memory
-        </Link>
+        <span className="pill-badge mb-5 inline-flex">Set up cynna</span>
         <h1 className="font-display text-[36px] leading-[1.05] tracking-[-0.02em] text-[var(--color-ink)] sm:text-[44px]">
-          Just a couple of{" "}
-          <span className="italic text-[var(--color-mute)]">questions.</span>
+          Your number,{" "}
+          <span className="italic text-[var(--color-mute)]">that&rsquo;s it.</span>
         </h1>
+        <p className="mt-3 text-[15px] text-[var(--color-ink-soft)]">
+          We&rsquo;ll take it from here &mdash; in iMessage.
+        </p>
       </div>
 
       <div className="surface-cream rounded-3xl p-5 sm:p-7">
-        <div className="mb-5">
-          <div className="mb-2 flex items-center justify-between text-[12px] text-[var(--color-mute)]">
-            <span>
-              Step {stepIndex + 1} of {STEP_ORDER.length}
+        <form onSubmit={onSubmit} className="space-y-4">
+          <label className="block">
+            <span className="mb-2 block text-[15px] font-medium leading-snug text-[var(--color-ink)]">
+              Your phone number
             </span>
-            <span>{Math.round(progress)}%</span>
-          </div>
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-black/8">
-            <div
-              className="h-full rounded-full bg-[var(--color-ink)] transition-[width] duration-500 ease-out"
-              style={{ width: `${progress}%` }}
+            <input
+              ref={inputRef}
+              type="tel"
+              autoComplete="tel"
+              inputMode="tel"
+              placeholder="(415) 555-1234"
+              aria-label="Your phone number"
+              aria-invalid={phone.length > 4 && !phoneOk ? "true" : "false"}
+              className="field-input"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
             />
-          </div>
-        </div>
-
-        <form onSubmit={onFormSubmit} className="space-y-5">
-          {step === "yourName" && (
-            <Field
-              label="What should we call you?"
-              hint="First name is fine — your partner will see this too."
-            >
-              <input
-                ref={inputRef}
-                type="text"
-                autoComplete="given-name"
-                placeholder="e.g. Aidan"
-                className="field-input"
-                value={yourName}
-                onChange={(e) => setYourName(e.target.value)}
-                maxLength={40}
-              />
-            </Field>
-          )}
-
-          {step === "yourPhone" && (
-            <Field
-              label={`Hi ${yourName.trim() || "there"} — what's your number?`}
-              hint="We'll text you from a real iMessage handle. US numbers can skip the +1."
-            >
-              <input
-                ref={inputRef}
-                type="tel"
-                autoComplete="tel"
-                inputMode="tel"
-                placeholder="(415) 555-1234"
-                className="field-input"
-                value={yourPhone}
-                onChange={(e) => setYourPhone(e.target.value)}
-                aria-invalid={
-                  yourPhone.length > 4 && !yourPhoneOk ? "true" : "false"
-                }
-              />
-              {yourPhoneOk && (
-                <span className="mt-2 inline-block text-[12.5px] text-[var(--color-mute)]">
-                  &rarr; {prettyPhone(yourPhoneE164)}
-                </span>
-              )}
-            </Field>
-          )}
-
-          {step === "partnerName" && (
-            <Field
-              label="Who are we adding?"
-              hint="Your person — the one you want to remember things with."
-            >
-              <input
-                ref={inputRef}
-                type="text"
-                autoComplete="off"
-                placeholder="e.g. Sam"
-                className="field-input"
-                value={partnerName}
-                onChange={(e) => setPartnerName(e.target.value)}
-                maxLength={40}
-              />
-            </Field>
-          )}
-
-          {step === "partnerPhone" && (
-            <Field
-              label={`${partnerName.trim() || "Their"} number?`}
-              hint="They'll get a friendly intro text. They don't need to install anything."
-            >
-              <input
-                ref={inputRef}
-                type="tel"
-                autoComplete="off"
-                inputMode="tel"
-                placeholder="(415) 555-6789"
-                className="field-input"
-                value={partnerPhone}
-                onChange={(e) => setPartnerPhone(e.target.value)}
-                aria-invalid={
-                  (partnerPhone.length > 4 && !partnerPhoneOk) || samePhone
-                    ? "true"
-                    : "false"
-                }
-              />
-              {partnerPhoneOk && !samePhone && (
-                <span className="mt-2 inline-block text-[12.5px] text-[var(--color-mute)]">
-                  &rarr; {prettyPhone(partnerPhoneE164)}
-                </span>
-              )}
-              {samePhone && (
-                <span className="mt-2 inline-block text-[12.5px] text-[#b3261e]">
-                  That&rsquo;s your number &mdash; try a different one.
-                </span>
-              )}
-            </Field>
-          )}
-
-          {step === "review" && (
-            <div className="space-y-4">
-              <p className="text-[14px] text-[var(--color-ink-soft)]">
-                Look right? Once you confirm, we&rsquo;ll give you a pairing
-                code to text to the bot.
-              </p>
-
-              <ul className="divide-y divide-black/10 rounded-xl border border-black/10 bg-white">
-                <ReviewRow
-                  label="You"
-                  value={`${yourName.trim()} · ${prettyPhone(yourPhoneE164)}`}
-                  onEdit={() => setStep("yourName")}
-                />
-                <ReviewRow
-                  label="Partner"
-                  value={`${partnerName.trim()} · ${prettyPhone(partnerPhoneE164)}`}
-                  onEdit={() => setStep("partnerName")}
-                />
-              </ul>
-
-              <p className="text-[12.5px] leading-relaxed text-[var(--color-mute)]">
-                By continuing you agree we can text both numbers and store
-                what you forward to the thread.
-              </p>
-            </div>
-          )}
+            {phoneOk && (
+              <span className="mt-2 inline-block text-[12.5px] text-[var(--color-mute)]">
+                &rarr; {prettyPhone(phoneE164)}
+              </span>
+            )}
+          </label>
 
           {error && (
             <div
@@ -346,96 +165,19 @@ export function InvitationPortal() {
             </div>
           )}
 
-          <div className="flex items-center gap-2 pt-1">
-            {stepIndex > 0 && (
-              <button
-                type="button"
-                onClick={back}
-                className="btn-depth h-11 px-4 text-[14px]"
-                disabled={submitting}
-              >
-                Back
-              </button>
-            )}
-            <button
-              type="submit"
-              className="btn-depth-dark h-11 flex-1 text-[15px]"
-              disabled={submitting || !canAdvance()}
-            >
-              {step === "review"
-                ? submitting
-                  ? "Creating pairing code…"
-                  : "Get my code"
-                : "Continue"}
-            </button>
-          </div>
+          <button
+            type="submit"
+            className="btn-depth-dark h-11 w-full text-[15px]"
+            disabled={submitting || !phoneOk}
+          >
+            {submitting ? "One sec…" : "Start"}
+          </button>
         </form>
       </div>
 
       <p className="mt-5 px-2 text-center text-[12.5px] leading-relaxed text-[var(--color-mute)]">
-        Already set up?{" "}
-        <Link
-          href="/"
-          className="text-[var(--color-ink)] underline decoration-black/20 underline-offset-4 hover:decoration-black"
-        >
-          Go home
-        </Link>
-        .
+        We&rsquo;ll text you a bot number to save. US numbers can skip the +1.
       </p>
     </div>
-  );
-}
-
-function Field({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="block">
-      <span className="mb-2 block text-[15px] font-medium leading-snug text-[var(--color-ink)]">
-        {label}
-      </span>
-      {children}
-      {hint && (
-        <span className="mt-2 block text-[12.5px] leading-relaxed text-[var(--color-mute)]">
-          {hint}
-        </span>
-      )}
-    </label>
-  );
-}
-
-function ReviewRow({
-  label,
-  value,
-  onEdit,
-}: {
-  label: string;
-  value: string;
-  onEdit: () => void;
-}) {
-  return (
-    <li className="flex items-center justify-between gap-3 px-4 py-3">
-      <div className="min-w-0">
-        <div className="text-[11px] uppercase tracking-wider text-[var(--color-mute)]">
-          {label}
-        </div>
-        <div className="truncate text-[14px] text-[var(--color-ink)]">
-          {value}
-        </div>
-      </div>
-      <button
-        type="button"
-        onClick={onEdit}
-        className="text-[12.5px] font-medium text-[var(--color-ink)] underline decoration-black/20 underline-offset-4 hover:decoration-black"
-      >
-        Edit
-      </button>
-    </li>
   );
 }

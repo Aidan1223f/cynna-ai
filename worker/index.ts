@@ -1,19 +1,3 @@
-/**
- * Spectrum worker.
- *
- * Long-running Node process that holds the persistent iMessage connection
- * Spectrum requires (`for await … of app.messages`). Vercel can't run this.
- *
- * Responsibilities:
- *  1. Listen on Spectrum's inbound stream.
- *  2. If a message looks like a pairing code (PAIR-XXXX), confirm the
- *     sender's side of a pending `pairings` row. When both sides are
- *     confirmed, create the iMessage group via `imessage(app).space(a, b)`,
- *     persist the couple row, and welcome them.
- *  3. Otherwise, forward the event to the Next.js webhook.
- *  4. Cache recent Message objects in an LRU so the app can react-by-id
- *     via the /react HTTP endpoint we expose here.
- */
 import { config } from "dotenv";
 config({ path: ".env.local" });
 
@@ -39,13 +23,10 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
-const HELLO =
-  "hi 👋 — i'm your shared memory. forward me anything you both want to remember and i'll keep it for you.";
-
 const PAIR_RE = /\bPAIR-([0-9A-HJKMNP-TV-Z]{4})\b/i;
+const URL_RE = /\bhttps?:\/\/[^\s]+/i;
 
-// ─── LRU of recent inbound Messages, keyed by id, so /react can resolve ──
-// Spectrum's react() is a method on the Message instance, not a free function.
+// ─── LRU of recent inbound Messages for /react ───────────────────────────
 type CachedMessage = { msg: { react: (e: string) => Promise<void> }; at: number };
 const messageCache = new Map<string, CachedMessage>();
 const MAX_CACHE = 5000;
@@ -54,7 +35,6 @@ const CACHE_TTL_MS = 30 * 60 * 1000;
 function rememberMessage(id: string, msg: CachedMessage["msg"]) {
   messageCache.set(id, { msg, at: Date.now() });
   if (messageCache.size > MAX_CACHE) {
-    // Drop the oldest 10% in one sweep.
     const drop = Math.floor(MAX_CACHE * 0.1);
     let i = 0;
     for (const k of messageCache.keys()) {
@@ -68,6 +48,26 @@ setInterval(() => {
   const cutoff = Date.now() - CACHE_TTL_MS;
   for (const [k, v] of messageCache) if (v.at < cutoff) messageCache.delete(k);
 }, 5 * 60 * 1000).unref();
+
+// ─── Send helpers (DM) ───────────────────────────────────────────────────
+async function sendDM(spaceId: string, text: string) {
+  const im = imessage(app);
+  const space = await (im as {
+    space: (input: { id: string; type: "dm" | "group" }) => Promise<{ send: (t: string) => Promise<void> }>;
+  }).space({ id: spaceId, type: "dm" });
+  await space.send(text);
+}
+
+async function sendDMs(spaceId: string, messages: string[], delayMs = 600) {
+  for (let i = 0; i < messages.length; i++) {
+    if (i > 0) await sleep(delayMs);
+    await sendDM(spaceId, messages[i]);
+  }
+}
+
+function sleep(ms: number) {
+  return new Promise<void>((r) => setTimeout(r, ms));
+}
 
 // ─── Forward event to Next.js webhook ────────────────────────────────────
 type Part =
@@ -98,92 +98,214 @@ async function forward(payload: {
   }
 }
 
-// Detect URLs in text so we tag them as link parts (mirrors Linq's behavior).
-const URL_RE = /\bhttps?:\/\/[^\s]+/i;
-
-// ─── Pairing-code handling ────────────────────────────────────────────────
+// ─── Conversational pairing state machine ─────────────────────────────────
 type PairingRow = {
   code: string;
   partner_a: string;
-  partner_b: string;
-  partner_a_confirmed_at: string | null;
-  partner_b_confirmed_at: string | null;
+  partner_b: string | null;
+  status: string;
+  initiator_dm_space_id: string | null;
+  partner_dm_space_id: string | null;
+  data: { initiator_name?: string; initiator_vibe?: string; partner_name?: string; partner_vibe?: string };
   couple_id: string | null;
+  expires_at: string;
 };
 
-async function tryConsumePairingCode(senderId: string, text: string): Promise<boolean> {
-  const m = text.match(PAIR_RE);
-  if (!m) return false;
-  const code = `PAIR-${m[1].toUpperCase()}`;
+/**
+ * Try to handle an inbound DM as part of the pairing flow.
+ * Returns true if the message was consumed (caller should not forward).
+ */
+async function handlePairingMessage(
+  senderId: string,
+  spaceId: string,
+  text: string
+): Promise<boolean> {
+  // 1. Check if this is a fresh PAIR-XXXX code
+  const codeMatch = text.match(PAIR_RE);
+  if (codeMatch) {
+    return await handleCodeSubmission(senderId, spaceId, `PAIR-${codeMatch[1].toUpperCase()}`);
+  }
 
-  const { data: pairing, error } = await supabase
+  // 2. Check if sender is in an active pairing conversation (by DM space)
+  const { data: byInitiator } = await supabase
     .from("pairings")
-    .select("code, partner_a, partner_b, partner_a_confirmed_at, partner_b_confirmed_at, couple_id")
-    .eq("code", code)
+    .select("*")
+    .eq("initiator_dm_space_id", spaceId)
+    .not("status", "in", '("complete","expired","awaiting_partner","awaiting_initiator")')
     .gt("expires_at", new Date().toISOString())
     .maybeSingle<PairingRow>();
 
-  if (error || !pairing) {
-    console.warn("[worker] unknown/expired pairing", code, senderId);
-    return false;
+  if (byInitiator) return await advanceInitiator(byInitiator, text);
+
+  const { data: byPartner } = await supabase
+    .from("pairings")
+    .select("*")
+    .eq("partner_dm_space_id", spaceId)
+    .not("status", "in", '("complete","expired","awaiting_initiator","awaiting_partner")')
+    .gt("expires_at", new Date().toISOString())
+    .maybeSingle<PairingRow>();
+
+  if (byPartner) return await advancePartner(byPartner, text);
+
+  return false;
+}
+
+async function handleCodeSubmission(
+  senderId: string,
+  spaceId: string,
+  code: string
+): Promise<boolean> {
+  const { data: pairing, error } = await supabase
+    .from("pairings")
+    .select("*")
+    .eq("code", code)
+    .maybeSingle<PairingRow>();
+
+  if (error || !pairing) return false;
+
+  // Expired?
+  if (new Date(pairing.expires_at) < new Date()) {
+    await sendDM(spaceId, "this code expired — grab a fresh one at cynna.app");
+    await supabase.from("pairings").update({ status: "expired" }).eq("code", code);
+    return true;
   }
 
-  const isA = pairing.partner_a === senderId;
-  const isB = pairing.partner_b === senderId;
-  if (!isA && !isB) {
-    console.warn("[worker] pairing code from non-participant", code, senderId);
-    return false;
+  // Initiator submits their code
+  if (pairing.status === "awaiting_initiator" && pairing.partner_a === senderId) {
+    await supabase.from("pairings").update({
+      status: "asking_initiator_name",
+      initiator_dm_space_id: spaceId,
+    }).eq("code", code);
+
+    await sendDMs(spaceId, [
+      "hey — got your code. i'm cynna, your shared memory bot.",
+      "what should i call you?",
+    ]);
+    return true;
   }
 
-  // Stamp the right side as confirmed.
-  const updates: Partial<PairingRow> = {};
-  if (isA && !pairing.partner_a_confirmed_at) updates.partner_a_confirmed_at = new Date().toISOString();
-  if (isB && !pairing.partner_b_confirmed_at) updates.partner_b_confirmed_at = new Date().toISOString();
-  if (Object.keys(updates).length > 0) {
-    await supabase.from("pairings").update(updates).eq("code", code);
+  // Initiator re-texts while waiting for partner
+  if (pairing.status === "awaiting_partner" && pairing.partner_a === senderId) {
+    await sendDM(spaceId, "still waiting on your partner — once they text me this code, we're all set.");
+    return true;
   }
 
-  // Both sides done → create the group and the couple row.
-  const aDone = pairing.partner_a_confirmed_at || updates.partner_a_confirmed_at;
-  const bDone = pairing.partner_b_confirmed_at || updates.partner_b_confirmed_at;
-  if (aDone && bDone && !pairing.couple_id) {
-    try {
-      await createCoupleAndGroup(pairing.partner_a, pairing.partner_b, code);
-    } catch (e) {
-      console.error("[worker] failed to create group", e);
+  // Partner submits the code
+  if (pairing.status === "awaiting_partner" && senderId !== pairing.partner_a) {
+    await supabase.from("pairings").update({
+      status: "asking_partner_name",
+      partner_b: senderId,
+      partner_dm_space_id: spaceId,
+    }).eq("code", code);
+
+    const initiatorName = pairing.data.initiator_name ?? "your partner";
+    await sendDMs(spaceId, [
+      `hey — ${initiatorName} added me to remember things with you two.`,
+      "what's your name?",
+    ]);
+    return true;
+  }
+
+  return false;
+}
+
+async function advanceInitiator(pairing: PairingRow, text: string): Promise<boolean> {
+  const spaceId = pairing.initiator_dm_space_id!;
+
+  if (pairing.status === "asking_initiator_name") {
+    const name = text.trim().slice(0, 40);
+    if (!name) {
+      await sendDM(spaceId, "i just need your name for now — what should i call you?");
+      return true;
     }
+    const data = { ...pairing.data, initiator_name: name };
+    await supabase.from("pairings").update({ status: "asking_initiator_vibe", data }).eq("code", pairing.code);
+    await sendDMs(spaceId, [
+      `nice to meet you, ${name.toLowerCase()}.`,
+      "quick question before we get your partner set up — when you two remember something together, what is it usually? food spots, trip ideas, random articles, something else?",
+    ]);
+    return true;
   }
-  return true;
+
+  if (pairing.status === "asking_initiator_vibe") {
+    const vibe = text.trim().slice(0, 120);
+    const data = { ...pairing.data, initiator_vibe: vibe || "all sorts of things" };
+    const minutesLeft = Math.max(1, Math.round((new Date(pairing.expires_at).getTime() - Date.now()) / 60000));
+    await supabase.from("pairings").update({ status: "awaiting_partner", data }).eq("code", pairing.code);
+    await sendDMs(spaceId, [
+      `perfect. now here's what you do: get your partner to text me this same code — ${pairing.code} — and i'll set up your shared thread.`,
+      `the code is good for another ${minutesLeft} minutes. once they text me, i'll take it from there.`,
+    ]);
+    return true;
+  }
+
+  return false;
+}
+
+async function advancePartner(pairing: PairingRow, text: string): Promise<boolean> {
+  const spaceId = pairing.partner_dm_space_id!;
+
+  if (pairing.status === "asking_partner_name") {
+    const name = text.trim().slice(0, 40);
+    if (!name) {
+      await sendDM(spaceId, "i just need your name for now — what should i call you?");
+      return true;
+    }
+    const data = { ...pairing.data, partner_name: name };
+    await supabase.from("pairings").update({ status: "asking_partner_vibe", data }).eq("code", pairing.code);
+    await sendDMs(spaceId, [
+      `hey ${name.toLowerCase()} — one thing before we start:`,
+      "is there anything you definitely want to never lose track of? a show, a restaurant, a place you keep meaning to visit?",
+    ]);
+    return true;
+  }
+
+  if (pairing.status === "asking_partner_vibe") {
+    const vibe = text.trim().slice(0, 120);
+    const data = { ...pairing.data, partner_vibe: vibe || "everything" };
+    await supabase.from("pairings").update({ status: "complete", data }).eq("code", pairing.code);
+    await createCoupleAndGroup(pairing, { ...data, partner_vibe: vibe || "everything" });
+    await sendDM(spaceId, "done — check your iMessage for the new group thread 🎉");
+    return true;
+  }
+
+  return false;
 }
 
 async function createCoupleAndGroup(
-  partnerA: string,
-  partnerB: string,
-  pairingCode: string
+  pairing: PairingRow,
+  data: { initiator_name?: string; initiator_vibe?: string; partner_name?: string; partner_vibe?: string }
 ): Promise<void> {
   const im = imessage(app);
-  // Resolve users + create the group space proactively.
-  // (Once-confirmed numbers are no longer "cold" to us.)
-  // Note: type narrowing is still loose at the runtime layer; we cast to any
-  // for the send call.
-  const alice = await (im as { user: (id: string) => Promise<unknown> }).user(partnerA);
-  const bob = await (im as { user: (id: string) => Promise<unknown> }).user(partnerB);
-  const space = await (im as { space: (...users: unknown[]) => Promise<{ id: string; send: (text: string) => Promise<void> }> }).space(alice, bob);
+  const alice = await (im as { user: (id: string) => Promise<unknown> }).user(pairing.partner_a);
+  const bob = await (im as { user: (id: string) => Promise<unknown> }).user(pairing.partner_b!);
+  const space = await (im as { space: (...users: unknown[]) => Promise<{ id: string; send: (t: string) => Promise<void> }> }).space(alice, bob);
 
-  // Stable couple id derived from the pairing code so the dashboard URL is
-  // predictable while the pairing is still on screen.
-  const coupleId = `c_${createHash("sha256").update(pairingCode).digest("hex").slice(0, 16)}`;
+  const coupleId = `c_${createHash("sha256").update(pairing.code).digest("hex").slice(0, 16)}`;
 
   const { error: insertErr } = await supabase
     .from("couples")
-    .upsert({ id: coupleId, partner_a: partnerA, partner_b: partnerB, photon_space_id: space.id });
+    .upsert({ id: coupleId, partner_a: pairing.partner_a, partner_b: pairing.partner_b, photon_space_id: space.id });
   if (insertErr) {
     console.error("[worker] couples upsert failed", insertErr);
     return;
   }
-  await supabase.from("pairings").update({ couple_id: coupleId }).eq("code", pairingCode);
+  await supabase.from("pairings").update({ couple_id: coupleId }).eq("code", pairing.code);
 
-  await space.send(HELLO);
+  const iName = (data.initiator_name ?? "").toLowerCase() || "one of you";
+  const pName = (data.partner_name ?? "").toLowerCase() || "the other";
+  const iVibe = (data.initiator_vibe ?? "").slice(0, 40) || "all sorts of things";
+  const pVibe = (data.partner_vibe ?? "").slice(0, 40) || "everything";
+
+  await space.send("okay — you two are connected. this is your shared memory thread.\n\nforward me anything you want to remember together: links, photos, voice notes, or just text. i'll keep it all.");
+  await sleep(1500);
+
+  if (iVibe === pVibe) {
+    await space.send(`you both said ${iVibe} — already on the same page. ask me anything, anytime.`);
+  } else {
+    await space.send(`${iName} told me you're mostly saving ${iVibe}, ${pName} mentioned ${pVibe} — i'll keep an eye out for both.\n\nask me anything, anytime.`);
+  }
+
   console.log("[worker] couple created", coupleId, "space", space.id);
 }
 
@@ -219,8 +341,6 @@ function startHttpServer() {
           return;
         }
         const im = imessage(app);
-        // Reconstruct a Space handle from id. Spectrum's iMessage provider
-        // accepts a bare id for sends.
         const space = await (im as {
           space: (input: { id: string; type: "group" | "dm" }) => Promise<{ send: (t: string) => Promise<void> }>;
         }).space({ id: body.spaceId, type: "group" });
@@ -280,12 +400,21 @@ async function main() {
 
       rememberMessage(messageId, message as unknown as CachedMessage["msg"]);
 
-      // Pairing code? Handle here; do not forward.
-      if (content.type === "text" && content.text && (await tryConsumePairingCode(senderId, content.text))) {
-        continue;
+      // DMs: try pairing flow first. If consumed, don't forward.
+      if (spaceType === "dm" && content.type === "text" && content.text) {
+        if (await handlePairingMessage(senderId, spaceId, content.text)) {
+          continue;
+        }
       }
 
-      // Translate content → parts[] for the existing ingest pipeline.
+      // Code in a group (edge case — someone texted the code in an existing group)
+      if (content.type === "text" && content.text?.match(PAIR_RE)) {
+        if (await handlePairingMessage(senderId, spaceId, content.text)) {
+          continue;
+        }
+      }
+
+      // Normal message — forward to Next.js ingest pipeline.
       const parts: Part[] = [];
       if (content.type === "text" && content.text) {
         parts.push({ type: "text", value: content.text });

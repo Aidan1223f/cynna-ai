@@ -6,11 +6,9 @@ import { env } from "@/lib/env";
 const E164 = /^\+[1-9]\d{6,14}$/;
 
 const Body = z.object({
-  partnerA: z.string().regex(E164, "partnerA must be E.164 (e.g. +14155551234)"),
-  partnerB: z.string().regex(E164, "partnerB must be E.164"),
+  phone: z.string().regex(E164, "phone must be E.164 (e.g. +14155551234)"),
 });
 
-/** Crockford base32 (no I/L/O/U) — 4 chars ≈ 1M codes; collisions handled below. */
 const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 function generateCode(): string {
   const bytes = randomBytes(4);
@@ -19,7 +17,7 @@ function generateCode(): string {
   return `PAIR-${out}`;
 }
 
-const PAIRING_TTL_MS = 60 * 60 * 1000; // 1 hour
+const PAIRING_TTL_MS = 60 * 60 * 1000;
 
 export async function POST(request: Request): Promise<Response> {
   let body: unknown;
@@ -33,12 +31,9 @@ export async function POST(request: Request): Promise<Response> {
   if (!parsed.success) {
     return Response.json({ error: parsed.error.flatten() }, { status: 400 });
   }
-  const { partnerA, partnerB } = parsed.data;
-  if (partnerA === partnerB) {
-    return Response.json({ error: "partners must have different numbers" }, { status: 400 });
-  }
 
-  // Generate a unique-ish pairing code with up to 5 retries on collision.
+  const { phone } = parsed.data;
+
   let code = "";
   let lastErr: unknown = null;
   for (let i = 0; i < 5; i++) {
@@ -46,8 +41,8 @@ export async function POST(request: Request): Promise<Response> {
     const expires_at = new Date(Date.now() + PAIRING_TTL_MS).toISOString();
     const { error } = await supabase.from("pairings").insert({
       code,
-      partner_a: partnerA,
-      partner_b: partnerB,
+      partner_a: phone,
+      status: "awaiting_initiator",
       expires_at,
     });
     if (!error) {
@@ -55,7 +50,6 @@ export async function POST(request: Request): Promise<Response> {
       break;
     }
     lastErr = error;
-    // Postgres unique-violation is 23505; retry on collision.
     if ((error as { code?: string }).code !== "23505") break;
   }
   if (lastErr) {
