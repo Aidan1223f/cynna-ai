@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "love-send — your couple's shared memory",
+  title: "cynna — your couple's shared memory",
   description: "a shared iMessage memory for couples. forward links, voice notes, and photos to the bot and find them later.",
 };
 

@@ -1,4 +1,4 @@
-# Fly.io config for the love-send Spectrum worker.
+# Fly.io config for the cynna Spectrum worker.
 # Deploy with: cd worker && fly launch --copy-config (first time)
 # Then:        fly deploy
 #
@@ -7,7 +7,7 @@
 #     INTERNAL_WEBHOOK_SECRET=... INTERNAL_WEBHOOK_URL=https://yourapp.vercel.app/api/photon/webhook \
 #     SUPABASE_URL=... SUPABASE_SERVICE_KEY=...
 
-app = "love-send-worker"
+app = "cynna-worker"
 primary_region = "iad"
 
 [build]

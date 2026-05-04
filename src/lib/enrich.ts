@@ -30,7 +30,7 @@ async function unfurl(url: string): Promise<{
   try {
     const res = await fetch(url, {
       signal: ctrl.signal,
-      headers: { "user-agent": "Mozilla/5.0 (love-send-bot)" },
+      headers: { "user-agent": "Mozilla/5.0 (cynna-bot)" },
       redirect: "follow",
     });
     if (!res.ok) return { og_title: null, og_description: null, og_image: null };

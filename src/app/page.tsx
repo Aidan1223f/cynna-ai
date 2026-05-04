@@ -4,7 +4,7 @@ export default function Home() {
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-8 px-6 py-12 font-sans">
       <header className="space-y-2">
-        <h1 className="text-3xl font-semibold tracking-tight">love-send</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">cynna</h1>
         <p className="text-zinc-600 dark:text-zinc-400">
           a shared iMessage memory for couples. forward links, voice notes, and photos to the bot
           and find them later.

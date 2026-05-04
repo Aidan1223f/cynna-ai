@@ -1,4 +1,4 @@
--- love-send schema. Run in Supabase SQL editor.
+-- cynna schema. Run in Supabase SQL editor.
 -- Idempotent: safe to re-run.
 
 create extension if not exists vector;
