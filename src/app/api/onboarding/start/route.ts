@@ -1,12 +1,7 @@
 import { z } from "zod";
-import { createChat } from "@/lib/linq";
+import { randomBytes } from "node:crypto";
 import { supabase } from "@/lib/supabase";
 import { env } from "@/lib/env";
-import {
-  enqueue,
-  nextDailyFire,
-  nextFridayFire,
-} from "@/lib/scheduler";
 
 const E164 = /^\+[1-9]\d{6,14}$/;
 
@@ -15,8 +10,16 @@ const Body = z.object({
   partnerB: z.string().regex(E164, "partnerB must be E.164"),
 });
 
-const HELLO =
-  "hi 👋 — i'm your shared memory. forward me anything you both want to remember and i'll keep it for you.";
+/** Crockford base32 (no I/L/O/U) — 4 chars ≈ 1M codes; collisions handled below. */
+const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+function generateCode(): string {
+  const bytes = randomBytes(4);
+  let out = "";
+  for (let i = 0; i < 4; i++) out += ALPHABET[bytes[i] % ALPHABET.length];
+  return `PAIR-${out}`;
+}
+
+const PAIRING_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 export async function POST(request: Request): Promise<Response> {
   let body: unknown;
@@ -35,35 +38,34 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: "partners must have different numbers" }, { status: 400 });
   }
 
-  // 1) Create the iMessage group via Linq (bot + both partners).
-  let chatId: string | undefined;
-  try {
-    const chat = await createChat({ to: [partnerA, partnerB], message: HELLO });
-    chatId = chat.chat?.id ?? (chat.id as string | undefined);
-  } catch (e) {
-    console.error("[onboarding] createChat failed", e);
-    return Response.json({ error: "failed to create iMessage group" }, { status: 502 });
+  // Generate a unique-ish pairing code with up to 5 retries on collision.
+  let code = "";
+  let lastErr: unknown = null;
+  for (let i = 0; i < 5; i++) {
+    code = generateCode();
+    const expires_at = new Date(Date.now() + PAIRING_TTL_MS).toISOString();
+    const { error } = await supabase.from("pairings").insert({
+      code,
+      partner_a: partnerA,
+      partner_b: partnerB,
+      expires_at,
+    });
+    if (!error) {
+      lastErr = null;
+      break;
+    }
+    lastErr = error;
+    // Postgres unique-violation is 23505; retry on collision.
+    if ((error as { code?: string }).code !== "23505") break;
   }
-
-  if (!chatId) {
-    return Response.json({ error: "linq did not return a chat id" }, { status: 502 });
+  if (lastErr) {
+    console.error("[onboarding] pairing insert failed", lastErr);
+    return Response.json({ error: "failed to start pairing" }, { status: 500 });
   }
-
-  // 2) Persist the couple row.
-  const { error: insertErr } = await supabase
-    .from("couples")
-    .upsert({ id: chatId, partner_a: partnerA, partner_b: partnerB });
-  if (insertErr) {
-    console.error("[onboarding] couples insert failed", insertErr);
-    return Response.json({ error: "failed to save couple" }, { status: 500 });
-  }
-
-  // 3) Schedule the recurring proactive messages (handlers are stubs day 1).
-  await enqueue(chatId, "daily_recall", nextDailyFire());
-  await enqueue(chatId, "weekly_date_idea", nextFridayFire());
 
   return Response.json({
-    coupleId: chatId,
-    dashboardUrl: `${env.PUBLIC_BASE_URL}/${encodeURIComponent(chatId)}`,
+    code,
+    botNumber: env.BOT_DISPLAY_NUMBER,
+    expiresInSeconds: Math.floor(PAIRING_TTL_MS / 1000),
   });
 }

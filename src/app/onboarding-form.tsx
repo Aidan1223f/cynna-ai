@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-type Result = { coupleId: string; dashboardUrl: string };
+type Result = { code: string; botNumber: string; expiresInSeconds: number };
 
 export function OnboardingForm() {
   const [partnerA, setA] = useState("");
@@ -41,18 +41,19 @@ export function OnboardingForm() {
 
   if (result) {
     return (
-      <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 space-y-3">
-        <p className="font-medium">we just texted both of you. check iMessage.</p>
+      <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-5 space-y-4">
+        <p className="font-medium">one last step.</p>
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          your shared dashboard:{" "}
-          <a
-            className="underline"
-            href={result.dashboardUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            {result.dashboardUrl}
-          </a>
+          both of you text this code to{" "}
+          <span className="font-mono">{result.botNumber}</span> from your iPhones:
+        </p>
+        <div className="rounded-md bg-zinc-100 dark:bg-zinc-900 px-4 py-3 text-center">
+          <span className="font-mono text-2xl tracking-wider">{result.code}</span>
+        </div>
+        <p className="text-xs text-zinc-500">
+          once we&apos;ve heard from both of you, we&apos;ll spin up your shared
+          iMessage thread and your dashboard. this code expires in{" "}
+          {Math.round(result.expiresInSeconds / 60)} minutes.
         </p>
       </div>
     );

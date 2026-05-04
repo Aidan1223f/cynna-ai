@@ -1,0 +1,43 @@
+# Fly.io config for the love-send Spectrum worker.
+# Deploy with: cd worker && fly launch --copy-config (first time)
+# Then:        fly deploy
+#
+# Secrets (do not put in this file):
+#   fly secrets set PROJECT_ID=... PROJECT_SECRET=... \
+#     INTERNAL_WEBHOOK_SECRET=... INTERNAL_WEBHOOK_URL=https://yourapp.vercel.app/api/photon/webhook \
+#     SUPABASE_URL=... SUPABASE_SERVICE_KEY=...
+
+app = "love-send-worker"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8787"
+
+[[services]]
+  internal_port = 8787
+  protocol = "tcp"
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [services.concurrency]
+    type = "connections"
+    soft_limit = 50
+    hard_limit = 100
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512

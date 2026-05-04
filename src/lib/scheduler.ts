@@ -4,7 +4,7 @@ import { supabase } from "./supabase";
 /**
  * Substrate for proactive (Poke-style) messaging.
  * Day 1: handlers are no-op stubs that just mark fired_at.
- * Day 2: fill `kindHandlers` with real `linq.sendMessage` calls.
+ * Day 2: fill `kindHandlers` with real `photon.sendText` calls.
  */
 
 export type TriggerKind = "daily_recall" | "weekly_date_idea";

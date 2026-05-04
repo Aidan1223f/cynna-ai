@@ -7,13 +7,33 @@ create table if not exists couples (
   id text primary key,
   partner_a text not null,
   partner_b text not null,
+  -- Photon iMessage Space identifier (the chat guid). Set once both partners
+  -- complete pairing and the worker creates the group; nullable while pending.
+  photon_space_id text unique,
   created_at timestamptz default now()
 );
+
+-- Pending pairings: created when the onboarding form is submitted, consumed
+-- when both partners text their PAIR-XXXX code to the bot. The worker
+-- promotes a complete pairing into a couples row + iMessage group.
+create table if not exists pairings (
+  code text primary key,
+  partner_a text not null,
+  partner_b text not null,
+  partner_a_confirmed_at timestamptz,
+  partner_b_confirmed_at timestamptz,
+  couple_id text references couples(id) on delete set null,
+  created_at timestamptz default now(),
+  expires_at timestamptz not null
+);
+create index if not exists pairings_partner_a_idx on pairings (partner_a) where partner_a_confirmed_at is null;
+create index if not exists pairings_partner_b_idx on pairings (partner_b) where partner_b_confirmed_at is null;
 
 create table if not exists saves (
   id uuid primary key default gen_random_uuid(),
   couple_id text not null references couples(id) on delete cascade,
-  linq_message_id text unique,
+  -- Photon iMessage message id (was linq_message_id). Unique to dedupe replays.
+  photon_message_id text unique,
   sender_handle text not null,
   kind text not null check (kind in ('text','link','image','voice')),
   raw_text text,

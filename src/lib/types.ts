@@ -1,5 +1,14 @@
 import { z } from "zod";
 
+/**
+ * Webhook envelope worker → Next.js.
+ *
+ * The worker translates Spectrum's `Message` objects into this shape so that
+ * the existing ingest pipeline doesn't need to know about Spectrum directly.
+ * Media buffers are inlined as base64 (no second download round-trip — the
+ * worker already has the bytes from the gRPC stream).
+ */
+
 const TextPart = z.object({
   type: z.literal("text"),
   value: z.string(),
@@ -12,45 +21,29 @@ const LinkPart = z.object({
 
 const MediaPart = z.object({
   type: z.literal("media"),
-  id: z.string().optional(),
-  url: z.string().url().optional(),
-  filename: z.string().optional(),
+  // Inline bytes (base64). The worker has the buffer in hand from Spectrum.
+  data_base64: z.string().optional(),
   mime_type: z.string().optional(),
+  filename: z.string().optional(),
   size_bytes: z.number().optional(),
 });
 
 export const Part = z.discriminatedUnion("type", [TextPart, LinkPart, MediaPart]);
 export type Part = z.infer<typeof Part>;
 
-export const MessageEvent = z.object({
-  api_version: z.string().optional(),
-  webhook_version: z.string().optional(),
+export const PhotonEvent = z.object({
+  // "message.received" today; future: "reaction.received" etc.
   event_type: z.string(),
-  event_id: z.string().optional(),
-  created_at: z.string().optional(),
-  trace_id: z.string().optional(),
-  partner_id: z.string().optional(),
-  data: z.object({
-    chat: z.object({
-      id: z.string(),
-      is_group: z.boolean().optional(),
-      owner_handle: z.string().optional(),
-    }),
-    id: z.string(),                          // message id
-    idempotency_key: z.string().optional(),
-    direction: z.string().optional(),
-    sender_handle: z.string(),
-    parts: z.array(Part),
-    sent_at: z.string().optional(),
-    delivered_at: z.string().nullable().optional(),
-    read_at: z.string().nullable().optional(),
-    reply_to: z.string().nullable().optional(),
-    effect: z.string().nullable().optional(),
-    service: z.string().optional(),
-    preferred_service: z.string().optional(),
-  }),
+  // iMessage Space (chat) id from Spectrum — used as our couple_id.
+  space_id: z.string(),
+  space_type: z.enum(["dm", "group"]),
+  // iMessage message id; unique per message; used for dedupe + react-by-id.
+  message_id: z.string(),
+  sender_handle: z.string(),
+  parts: z.array(Part),
+  sent_at: z.string().optional(),
 });
-export type MessageEvent = z.infer<typeof MessageEvent>;
+export type PhotonEvent = z.infer<typeof PhotonEvent>;
 
 export type SaveKind = "text" | "link" | "image" | "voice";
 
@@ -62,7 +55,6 @@ export function deriveKind(parts: Part[]): SaveKind {
       const mime = p.mime_type ?? "";
       if (mime.startsWith("audio/")) return "voice";
       if (mime.startsWith("image/")) return "image";
-      // fall through; if we don't recognize the media type, treat it as image
       return "image";
     }
   }

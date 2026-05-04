@@ -1,7 +1,6 @@
 import "server-only";
 import { supabase } from "./supabase";
 import { embed, transcribe } from "./openai";
-import { downloadMedia } from "./linq";
 
 type EnrichableRow = {
   id: string;
@@ -59,8 +58,16 @@ async function unfurl(url: string): Promise<{
 /**
  * Fill in transcript / og_* / embedding for a save row.
  * Idempotent — safe to re-run; uses the row's current state to decide what to do.
+ *
+ * `media` is an inline buffer the worker already pulled from Spectrum. We
+ * don't persist it; we only feed it through Whisper. If null and the row
+ * is a voice note, we skip transcription (re-runs of enrich() therefore
+ * can't recover transcripts for old saves — acceptable for day 1).
  */
-export async function enrich(saveId: string): Promise<void> {
+export async function enrich(
+  saveId: string,
+  media?: { buf: ArrayBuffer; mime: string } | null
+): Promise<void> {
   const { data: row, error } = await supabase
     .from("saves")
     .select("id, kind, raw_text, source_url, media_url, transcript, og_title, og_description, og_image")
@@ -73,11 +80,11 @@ export async function enrich(saveId: string): Promise<void> {
 
   const updates: Record<string, unknown> = {};
 
-  // 1) Voice → Whisper.
-  if (row.kind === "voice" && row.media_url && !row.transcript) {
+  // 1) Voice → Whisper. Uses the inline buffer the worker handed us; we
+  //    don't fetch from a URL because Spectrum delivers bytes directly.
+  if (row.kind === "voice" && media && !row.transcript) {
     try {
-      const { buf, mime } = await downloadMedia(row.media_url);
-      const text = await transcribe(buf, mime, "voice.m4a");
+      const text = await transcribe(media.buf, media.mime, "voice.m4a");
       if (text) updates.transcript = text;
     } catch (e) {
       console.error("[enrich] transcribe failed", e);

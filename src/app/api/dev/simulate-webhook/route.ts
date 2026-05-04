@@ -1,13 +1,12 @@
 import { ingest } from "@/lib/ingest";
-import { MessageEvent, type Part } from "@/lib/types";
+import { PhotonEvent, type Part } from "@/lib/types";
 import { z } from "zod";
 
 const SimRequest = z.object({
   kind: z.enum(["text", "link", "image", "voice"]),
-  chatId: z.string(),
+  spaceId: z.string(),
   sender: z.string(),
   value: z.string().optional(),
-  /** Optional override for the synthetic message id (otherwise time-based). */
   messageId: z.string().optional(),
 });
 
@@ -23,14 +22,17 @@ function buildParts(
     case "image":
       return [{
         type: "media",
-        url: value ?? "https://placehold.co/600x400.png",
+        // 1x1 transparent png; the dashboard renders inline:<id> placeholders
+        // for now since we don't persist media bytes.
+        data_base64:
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
         mime_type: "image/png",
         filename: "sim.png",
       }];
     case "voice":
       return [{
         type: "media",
-        url: value ?? "https://example.com/sim-voice.m4a",
+        data_base64: value ?? "",
         mime_type: "audio/x-m4a",
         filename: "sim.m4a",
       }];
@@ -54,18 +56,14 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { kind, chatId, sender, value, messageId } = parsed.data;
-  const envelope = MessageEvent.parse({
+  const { kind, spaceId, sender, value, messageId } = parsed.data;
+  const envelope = PhotonEvent.parse({
     event_type: "message.received",
-    event_id: `sim_${Date.now()}`,
-    created_at: new Date().toISOString(),
-    data: {
-      chat: { id: chatId, is_group: true },
-      id: messageId ?? `sim_msg_${Date.now()}`,
-      direction: "inbound",
-      sender_handle: sender,
-      parts: buildParts(kind, value),
-    },
+    space_id: spaceId,
+    space_type: "group",
+    message_id: messageId ?? `sim_msg_${Date.now()}`,
+    sender_handle: sender,
+    parts: buildParts(kind, value),
   });
 
   await ingest(envelope);
