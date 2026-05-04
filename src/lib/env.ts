@@ -18,9 +18,10 @@ function optional(name: string): string | undefined {
 }
 
 export const env = {
-  get LINQ_TOKEN() { return required("LINQ_TOKEN"); },
-  get LINQ_BOT_HANDLE() { return required("LINQ_BOT_HANDLE"); },
-  get LINQ_WEBHOOK_SECRET() { return required("LINQ_WEBHOOK_SECRET"); },
+  get PROJECT_ID() { return required("PROJECT_ID"); },
+  get PROJECT_SECRET() { return required("PROJECT_SECRET"); },
+  get INTERNAL_WEBHOOK_SECRET() { return required("INTERNAL_WEBHOOK_SECRET"); },
+  get WORKER_URL() { return required("WORKER_URL"); },
   get OPENAI_API_KEY() { return optional("OPENAI_API_KEY"); },
   get SUPABASE_URL() { return required("SUPABASE_URL"); },
   get SUPABASE_SERVICE_KEY() { return required("SUPABASE_SERVICE_KEY"); },

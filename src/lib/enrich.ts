@@ -1,7 +1,7 @@
 import "server-only";
 import { supabase } from "./supabase";
 import { embed, transcribe } from "./openai";
-import { downloadMedia } from "./linq";
+import { downloadMedia } from "./photon";
 
 type EnrichableRow = {
   id: string;

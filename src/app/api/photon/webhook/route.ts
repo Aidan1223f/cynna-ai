@@ -3,9 +3,9 @@ import { ingest } from "@/lib/ingest";
 import { MessageEvent } from "@/lib/types";
 
 export async function POST(request: Request): Promise<Response> {
-  // Interim auth: shared-secret header until Linq's HMAC scheme is documented.
-  const secret = request.headers.get("x-linq-secret");
-  if (secret !== env.LINQ_WEBHOOK_SECRET) {
+  // Worker → Next.js auth: shared secret header (matches what the worker sends).
+  const secret = request.headers.get("x-internal-secret");
+  if (secret !== env.INTERNAL_WEBHOOK_SECRET) {
     return new Response("unauthorized", { status: 401 });
   }
 
@@ -22,7 +22,6 @@ export async function POST(request: Request): Promise<Response> {
     return new Response("invalid envelope", { status: 400 });
   }
 
-  // Only react to inbound messages; ignore reactions, status updates, etc.
   if (parsed.data.event_type !== "message.received") {
     return Response.json({ ok: true, ignored: parsed.data.event_type });
   }

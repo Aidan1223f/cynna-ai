@@ -1,40 +1,36 @@
 import "server-only";
 import { env } from "./env";
 
-const BASE = "https://api.linqapp.com/api/partner/v3";
-
 type Part =
   | { type: "text"; value: string }
   | { type: "link"; value: string }
   | { type: "media"; id?: string; url?: string; filename?: string; mime_type?: string; size_bytes?: number };
 
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetch(`${env.WORKER_URL}${path}`, {
     method,
     headers: {
-      authorization: `Bearer ${env.LINQ_TOKEN}`,
+      "x-internal-secret": env.INTERNAL_WEBHOOK_SECRET,
       "content-type": "application/json",
     },
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`Linq ${method} ${path} → ${res.status} ${text}`);
+    throw new Error(`Photon worker ${method} ${path} → ${res.status} ${text}`);
   }
   return (await res.json()) as T;
 }
 
 export type CreateChatResponse = {
-  // Linq returns at least chat.id; rest of shape unknown until first real call.
-  chat?: { id: string; is_group?: boolean; owner_handle?: string };
+  chat?: { id: string; is_group?: boolean };
   id?: string;
   [k: string]: unknown;
 };
 
-/** Create a new (group) chat. `to.length >= 2` makes it a group. */
+/** Create a new (group) chat via the Photon worker. `to.length >= 2` makes it a group. */
 export async function createChat(input: { to: string[]; message: string }): Promise<CreateChatResponse> {
   return call<CreateChatResponse>("POST", "/chats", {
-    from: env.LINQ_BOT_HANDLE,
     to: input.to,
     message: input.message,
   });
@@ -54,12 +50,12 @@ export async function react(messageId: string, emoji: string): Promise<unknown> 
   });
 }
 
-/** Download a media URL (images, voice notes) returned in webhook payloads. */
-export async function downloadMedia(url: string): Promise<{ buf: ArrayBuffer; mime: string }> {
-  const res = await fetch(url, {
-    headers: { authorization: `Bearer ${env.LINQ_TOKEN}` },
+/** Download a media attachment by id (worker proxies to Photon's attachments.download). */
+export async function downloadMedia(idOrUrl: string): Promise<{ buf: ArrayBuffer; mime: string }> {
+  const res = await fetch(`${env.WORKER_URL}/media/${encodeURIComponent(idOrUrl)}`, {
+    headers: { "x-internal-secret": env.INTERNAL_WEBHOOK_SECRET },
   });
-  if (!res.ok) throw new Error(`downloadMedia ${url} → ${res.status}`);
+  if (!res.ok) throw new Error(`downloadMedia ${idOrUrl} → ${res.status}`);
   const mime = res.headers.get("content-type") ?? "application/octet-stream";
   return { buf: await res.arrayBuffer(), mime };
 }

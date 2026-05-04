@@ -2,7 +2,7 @@ import "server-only";
 import { after } from "next/server";
 import { supabase } from "./supabase";
 import { deriveKind, type MessageEvent, type Part } from "./types";
-import { react } from "./linq";
+import { react } from "./photon";
 import { enrich } from "./enrich";
 
 /** Best text to display before enrichment runs. */
@@ -28,8 +28,8 @@ function pickMediaUrl(parts: Part[]): string | null {
 }
 
 /**
- * Process one Linq message.received event:
- *   1. Insert a saves row (idempotent on linq_message_id).
+ * Process one Photon message.received event:
+ *   1. Insert a saves row (idempotent on photon_message_id).
  *   2. ✅-react inline so the user sees confirmation fast.
  *   3. Schedule enrichment via after() so the webhook acks quickly.
  */
@@ -50,14 +50,14 @@ export async function ingest(event: MessageEvent): Promise<void> {
     .upsert(
       {
         couple_id: data.chat.id,
-        linq_message_id: data.id,
+        photon_message_id: data.id,
         sender_handle: data.sender_handle,
         kind,
         raw_text,
         source_url,
         media_url,
       },
-      { onConflict: "linq_message_id" }
+      { onConflict: "photon_message_id" }
     )
     .select("id, kind, source_url, media_url, raw_text")
     .single();

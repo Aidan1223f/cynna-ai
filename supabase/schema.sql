@@ -13,7 +13,7 @@ create table if not exists couples (
 create table if not exists saves (
   id uuid primary key default gen_random_uuid(),
   couple_id text not null references couples(id) on delete cascade,
-  linq_message_id text unique,
+  photon_message_id text unique,
   sender_handle text not null,
   kind text not null check (kind in ('text','link','image','voice')),
   raw_text text,

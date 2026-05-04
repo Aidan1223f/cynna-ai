@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { createChat } from "@/lib/linq";
+import { createChat } from "@/lib/photon";
 import { supabase } from "@/lib/supabase";
 import { env } from "@/lib/env";
 import {
@@ -35,7 +35,7 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: "partners must have different numbers" }, { status: 400 });
   }
 
-  // 1) Create the iMessage group via Linq (bot + both partners).
+  // 1) Create the iMessage group via Photon (worker + both partners).
   let chatId: string | undefined;
   try {
     const chat = await createChat({ to: [partnerA, partnerB], message: HELLO });
@@ -46,7 +46,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   if (!chatId) {
-    return Response.json({ error: "linq did not return a chat id" }, { status: 502 });
+    return Response.json({ error: "photon did not return a chat id" }, { status: 502 });
   }
 
   // 2) Persist the couple row.

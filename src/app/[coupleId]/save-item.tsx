@@ -8,7 +8,7 @@ export type CoupleRow = {
 export type SaveRow = {
   id: string;
   couple_id: string;
-  linq_message_id: string | null;
+  photon_message_id: string | null;
   sender_handle: string;
   kind: "text" | "link" | "image" | "voice";
   raw_text: string | null;

@@ -1,11 +1,11 @@
 import "server-only";
 import { supabase } from "./supabase";
-import { sendMessage } from "./linq";
+import { sendMessage } from "./photon";
 import { compose } from "./voice";
 
 /**
  * Substrate for proactive (Poke-style) messaging.
- * Handlers compose a message in voice (see voice.ts) and send via Linq.
+ * Handlers compose a message in voice (see voice.ts) and send via Photon.
  */
 
 export type TriggerKind = "daily_recall" | "weekly_date_idea";
