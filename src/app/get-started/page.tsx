@@ -2,7 +2,7 @@ import { SiteHeader } from "../site-chrome";
 import { InvitationPortal } from "./invitation-portal";
 
 export const metadata = {
-  title: "Get started — love-send",
+  title: "Get started — cynna",
   description: "Set up your shared memory in under a minute.",
 };
 

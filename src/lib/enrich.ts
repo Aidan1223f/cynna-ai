@@ -1,7 +1,6 @@
 import "server-only";
 import { supabase } from "./supabase";
 import { embed, transcribe } from "./openai";
-import { downloadMedia } from "./linq";
 import { classifyUrl } from "./sources";
 import { unfurl } from "./unfurl";
 import { extractAppleMaps, type Place } from "./extractors/apple-maps";
@@ -64,9 +63,16 @@ async function listSubjectNames(coupleId: string): Promise<string[]> {
 
 /**
  * Fill in transcript / og_* / place / subject_id / embedding for a save row.
- * Idempotent — safe to re-run; uses the row's current state to decide what to do.
+ * Idempotent - safe to re-run; uses the row's current state to decide what to do.
+ *
+ * `media` is an inline buffer the worker already pulled from Spectrum. We
+ * don't persist it; we only feed it through Whisper. If null and the row
+ * is a voice note, we skip transcription.
  */
-export async function enrich(saveId: string): Promise<void> {
+export async function enrich(
+  saveId: string,
+  media?: { buf: ArrayBuffer; mime: string } | null
+): Promise<void> {
   const { data: row, error } = await supabase
     .from("saves")
     .select(
@@ -81,19 +87,18 @@ export async function enrich(saveId: string): Promise<void> {
 
   const updates: Record<string, unknown> = {};
 
-  // 1) Voice → Whisper.
-  if (row.kind === "voice" && row.media_url && !row.transcript) {
+  // 1) Voice -> Whisper. Uses the inline buffer the worker handed us; we
+  //    don't fetch from a URL because Spectrum delivers bytes directly.
+  if (row.kind === "voice" && media && !row.transcript) {
     try {
-      const { buf, mime } = await downloadMedia(row.media_url);
-      const text = await transcribe(buf, mime, "voice.m4a");
+      const text = await transcribe(media.buf, media.mime, "voice.m4a");
       if (text) updates.transcript = text;
     } catch (e) {
       console.error("[enrich] transcribe failed", e);
     }
   }
 
-  // 2) Link → classify + unfurl + provider-specific extract.
-  let resolvedKind: EnrichableRow["kind"] = row.kind;
+  // 2) Link -> classify + unfurl + provider-specific extract.
   let resolvedProvider: string | null = row.source_provider;
 
   if (row.source_url && !row.og_title && !row.place) {
@@ -107,7 +112,6 @@ export async function enrich(saveId: string): Promise<void> {
         if (place) {
           updates.place = place;
           updates.kind = "place";
-          resolvedKind = "place";
           if (place.name) updates.og_title = place.name;
           if (place.address) updates.og_description = place.address;
         }
@@ -116,15 +120,12 @@ export async function enrich(saveId: string): Promise<void> {
         if (u.title) updates.og_title = u.title;
         if (u.description) updates.og_description = u.description;
         if (u.image) updates.og_image = u.image;
-        if (classified.content === "video") {
-          updates.kind = "video";
-          resolvedKind = "video";
-        }
+        if (classified.content === "video") updates.kind = "video";
       }
     }
   }
 
-  // 3) Subject classification — only if we have meaningful text and no subject yet.
+  // 3) Subject classification - only if we have meaningful text and no subject yet.
   const subjectText =
     (updates.transcript as string | undefined) ??
     row.transcript ??
@@ -167,10 +168,7 @@ export async function enrich(saveId: string): Promise<void> {
     }
   }
 
-  // Suppress no-op writes.
   if (Object.keys(updates).length === 0) return;
-  // resolvedKind is captured above for downstream callers; not written separately.
-  void resolvedKind;
 
   const { error: updErr } = await supabase.from("saves").update(updates).eq("id", saveId);
   if (updErr) console.error("[enrich] update failed", updErr);

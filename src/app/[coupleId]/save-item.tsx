@@ -2,13 +2,14 @@ export type CoupleRow = {
   id: string;
   partner_a: string;
   partner_b: string;
+  photon_space_id: string | null;
   created_at: string;
 };
 
 export type SaveRow = {
   id: string;
   couple_id: string;
-  linq_message_id: string | null;
+  photon_message_id: string | null;
   sender_handle: string;
   kind: "text" | "link" | "image" | "voice";
   raw_text: string | null;
@@ -73,8 +74,10 @@ export function SaveItem({ save, couple }: { save: SaveRow; couple: CoupleRow })
           <span className="break-words whitespace-pre-wrap">{body}</span>
         )}
       </div>
-      {save.kind === "image" && save.media_url && (
+      {save.kind === "image" && save.media_url && !save.media_url.startsWith("inline:") && (
         // Plain <img>: media URLs are pre-signed and remote-pattern allowlist is deferred.
+        // Day 1 Photon path stores `inline:<id>` placeholders since we don't
+        // persist bytes — render nothing for those until object storage lands.
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={save.media_url}

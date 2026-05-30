@@ -13,7 +13,6 @@ function LogoMark({ size }: { size: number }) {
         alt=""
         fill
         sizes={`${size}px`}
-        preload
         className="scale-[1.42] object-cover object-top"
       />
     </span>
@@ -27,7 +26,7 @@ export function SiteHeader() {
         <Link href="/" className="flex items-center gap-2">
           <LogoMark size={32} />
           <span className="font-display text-[22px] leading-none tracking-tight text-[var(--color-ink)]">
-            love-send
+            cynna
           </span>
         </Link>
 
@@ -61,7 +60,7 @@ export function SiteFooter() {
           <div className="flex items-center gap-2">
             <LogoMark size={32} />
             <span className="font-display text-[22px] leading-none tracking-tight">
-              love-send
+              cynna
             </span>
           </div>
           <p className="mt-4 max-w-sm text-[14px] leading-relaxed text-[var(--color-ink-soft)]">
@@ -108,7 +107,7 @@ export function SiteFooter() {
         </div>
       </div>
       <div className="mx-auto max-w-6xl border-t border-black/5 px-5 py-6 text-[12px] text-[var(--color-mute)]">
-        © {new Date().getFullYear()} love-send · Made for two.
+        &copy; {new Date().getFullYear()} cynna &middot; Made for two.
       </div>
     </footer>
   );

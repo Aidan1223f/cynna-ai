@@ -18,12 +18,12 @@ export default function Home() {
               aria-hidden
               className="text-[var(--color-mute)] transition-transform group-hover:translate-x-0.5"
             >
-              →
+              &rarr;
             </span>
           </Link>
 
           <h1 className="text-balance text-center font-display text-[44px] leading-[1.05] tracking-[-0.025em] text-[var(--color-ink)] sm:text-[68px] sm:leading-[1.02]">
-            Meet love-send,
+            Meet cynna,
             <br className="hidden sm:block" />{" "}
             <span className="italic text-[var(--color-mute)]">
               your shared memory.
@@ -32,7 +32,7 @@ export default function Home() {
 
           <p className="max-w-[560px] text-balance text-center text-[16px] leading-relaxed text-[var(--color-ink-soft)] sm:text-[17px]">
             Add one number. Forward links, voice notes, and photos to the
-            thread. Ask later — together — and we&rsquo;ll find it.
+            thread. Ask later &mdash; together &mdash; and we&rsquo;ll find it.
           </p>
 
           <div className="flex items-center gap-3">
@@ -54,14 +54,14 @@ export default function Home() {
                 <div className="mb-3 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className="grid size-8 place-items-center rounded-full bg-[var(--color-cream)] text-[14px] font-medium">
-                      ls
+                      cy
                     </span>
                     <div className="leading-tight">
                       <div className="text-[14px] font-medium text-[var(--color-ink)]">
-                        love-send
+                        cynna
                       </div>
                       <div className="text-[11px] text-[var(--color-mute)]">
-                        iMessage · just you two
+                        iMessage &middot; just you two
                       </div>
                     </div>
                   </div>
@@ -83,7 +83,7 @@ export default function Home() {
                   </div>
                   <div className="flex justify-start">
                     <div className="max-w-[78%] rounded-2xl rounded-bl-md bg-[var(--color-cream-3)] px-3.5 py-2 text-[14.5px] text-[var(--color-ink)]">
-                      saved to your bucket — i&rsquo;ll surface it next friday
+                      saved to your bucket &mdash; i&rsquo;ll surface it next friday
                       when you&rsquo;re planning date night ✨
                     </div>
                   </div>
@@ -94,7 +94,7 @@ export default function Home() {
                   </div>
                   <div className="flex justify-start">
                     <div className="max-w-[78%] rounded-2xl rounded-bl-md bg-[var(--color-cream-3)] px-3.5 py-2 text-[14.5px] text-[var(--color-ink)]">
-                      &ldquo;The Wager&rdquo; by david grann — you forwarded it
+                      &ldquo;The Wager&rdquo; by david grann &mdash; you forwarded it
                       march 14
                     </div>
                   </div>
@@ -130,7 +130,7 @@ export default function Home() {
               {
                 n: "03",
                 t: "Ask later",
-                d: "Search your shared bucket, or wait — we&rsquo;ll surface it when it&rsquo;s relevant.",
+                d: "Search your shared bucket, or wait &mdash; we&rsquo;ll surface it when it&rsquo;s relevant.",
               },
             ].map((s) => (
               <div
@@ -160,7 +160,7 @@ export default function Home() {
               <span className="italic text-[var(--color-mute)]">
                 that knows you&rsquo;re a we
               </span>{" "}
-              — and remembers what matters most.
+              &mdash; and remembers what matters most.
             </p>
             <div className="mt-8 flex justify-center">
               <Link
@@ -185,11 +185,11 @@ export default function Home() {
             {[
               {
                 q: "Do I need to download anything?",
-                a: "No. love-send is a regular iMessage contact. Save the number, text it like a friend.",
+                a: "No. cynna is a regular iMessage contact. Save the number, text it like a friend.",
               },
               {
                 q: "Can my partner and I both text the same thread?",
-                a: "Yes — that&rsquo;s the whole point. We create a 3-way iMessage with both of you and the bot.",
+                a: "Yes &mdash; that&rsquo;s the whole point. We create a 3-way iMessage with both of you and the bot.",
               },
               {
                 q: "Is anyone reading our messages?",

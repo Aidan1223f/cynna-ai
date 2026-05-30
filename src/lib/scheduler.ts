@@ -1,11 +1,11 @@
 import "server-only";
 import { supabase } from "./supabase";
-import { sendMessage } from "./linq";
+import { sendText } from "./photon";
 import { compose } from "./voice";
 
 /**
  * Substrate for proactive (Poke-style) messaging.
- * Handlers compose a message in voice (see voice.ts) and send via Linq.
+ * Handlers compose a message in voice (see voice.ts) and send via Photon.
  */
 
 export type TriggerKind = "daily_recall" | "weekly_date_idea";
@@ -49,7 +49,22 @@ export function nextFridayFire(from: Date = new Date()): Date {
 
 type Handler = (coupleId: string, payload: Record<string, unknown>) => Promise<void>;
 
-/** Pull names + a recent surfaceable save. Tiny v1 — refine as we learn. */
+async function sendToCouple(coupleId: string, text: string): Promise<void> {
+  const { data: couple, error } = await supabase
+    .from("couples")
+    .select("photon_space_id")
+    .eq("id", coupleId)
+    .single<{ photon_space_id: string | null }>();
+
+  if (error || !couple?.photon_space_id) {
+    console.warn("[scheduler] no photon space for", coupleId, error);
+    return;
+  }
+
+  await sendText(couple.photon_space_id, text);
+}
+
+/** Pull names + a recent surfaceable save. Tiny v1 - refine as we learn. */
 async function buildDailyRecallContext(coupleId: string): Promise<string | null> {
   const { data: couple } = await supabase
     .from("couples")
@@ -63,7 +78,7 @@ async function buildDailyRecallContext(coupleId: string): Promise<string | null>
     .select("sender_handle, kind, raw_text, og_title, transcript, created_at")
     .eq("couple_id", coupleId)
     .order("created_at", { ascending: false })
-    .range(3, 3) // skip the most recent few; recall is for older stuff
+    .range(3, 3)
     .maybeSingle();
   if (!save) return null;
 
@@ -105,14 +120,14 @@ const kindHandlers: Record<TriggerKind, Handler> = {
     if (!ctx) return;
     const reply = await compose("daily_recall", ctx);
     if (!reply) return;
-    await sendMessage(coupleId, [{ type: "text", value: reply }]);
+    await sendToCouple(coupleId, reply);
   },
   weekly_date_idea: async (coupleId) => {
     const ctx = await buildWeeklyDateContext(coupleId);
     if (!ctx) return;
     const reply = await compose("weekly_date_idea", ctx);
     if (!reply) return;
-    await sendMessage(coupleId, [{ type: "text", value: reply }]);
+    await sendToCouple(coupleId, reply);
   },
 };
 

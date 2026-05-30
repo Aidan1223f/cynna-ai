@@ -18,13 +18,28 @@ function optional(name: string): string | undefined {
 }
 
 export const env = {
-  get LINQ_TOKEN() { return required("LINQ_TOKEN"); },
-  get LINQ_BOT_HANDLE() { return required("LINQ_BOT_HANDLE"); },
-  get LINQ_WEBHOOK_SECRET() { return required("LINQ_WEBHOOK_SECRET"); },
+  // Photon Spectrum (https://app.photon.codes)
+  get PROJECT_ID() { return required("PROJECT_ID"); },
+  get PROJECT_SECRET() { return required("PROJECT_SECRET"); },
+  // Shared secret on the worker → Next.js webhook (and the react callback the
+  // other direction). Generate with `openssl rand -hex 32`.
+  get INTERNAL_WEBHOOK_SECRET() { return required("INTERNAL_WEBHOOK_SECRET"); },
+  // URL the worker POSTs inbound events to. Defaults to the local dev server.
+  get INTERNAL_WEBHOOK_URL() {
+    return optional("INTERNAL_WEBHOOK_URL") ?? "http://localhost:3000/api/photon/webhook";
+  },
+  // URL the Next.js app POSTs back to the worker for outbound actions
+  // (sending text, reacting). Worker-side host:port; not used by the app.
+  get WORKER_URL() {
+    return optional("WORKER_URL") ?? "http://localhost:8787";
+  },
   get OPENAI_API_KEY() { return optional("OPENAI_API_KEY"); },
   get SUPABASE_URL() { return required("SUPABASE_URL"); },
   get SUPABASE_SERVICE_KEY() { return required("SUPABASE_SERVICE_KEY"); },
   get PUBLIC_BASE_URL() { return optional("PUBLIC_BASE_URL") ?? "http://localhost:3000"; },
+  // Display string the onboarding page shows ("text PAIR-XXXX to +1...").
+  // Worker-side this is auto-discovered; app-side we just render whatever you set.
+  get BOT_DISPLAY_NUMBER() { return optional("BOT_DISPLAY_NUMBER") ?? "the bot"; },
 };
 
 export const hasOpenAI = Boolean(process.env.OPENAI_API_KEY);

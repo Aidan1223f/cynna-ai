@@ -24,7 +24,6 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-/* Poke-style depth button: cream gradient pill with inset highlight + soft shadow */
 .btn-depth {
   display: inline-flex;
   align-items: center;
@@ -65,7 +64,6 @@ body {
   cursor: not-allowed;
 }
 
-/* Dark variant for primary action (used on get-started) */
 .btn-depth-dark {
   display: inline-flex;
   align-items: center;
@@ -148,7 +146,6 @@ body {
   box-shadow: 0 0 0 3px rgba(179, 38, 30, 0.08);
 }
 
-/* Subtle background grain on the marketing surface */
 .bg-page-grain {
   background-color: #ffffff;
   background-image: radial-gradient(

@@ -1,4 +1,4 @@
--- love-send schema. Run in Supabase SQL editor.
+-- cynna schema. Run in Supabase SQL editor.
 -- Idempotent: safe to re-run.
 
 create extension if not exists vector;
@@ -7,13 +7,57 @@ create table if not exists couples (
   id text primary key,
   partner_a text not null,
   partner_b text not null,
+  -- Photon iMessage Space identifier (the chat guid). Set once both partners
+  -- complete pairing and the worker creates the group; nullable while pending.
+  photon_space_id text unique,
   created_at timestamptz default now()
 );
+
+-- Pairings: created when the onboarding form is submitted. The worker walks
+-- through a conversational state machine (DM with each partner) before
+-- creating the couple row + iMessage group.
+create table if not exists pairings (
+  code text primary key,
+  partner_a text not null,
+  partner_b text,
+  status text not null default 'awaiting_initiator'
+    check (status in (
+      'awaiting_initiator',
+      'asking_initiator_name',
+      'asking_initiator_vibe',
+      'awaiting_partner',
+      'asking_partner_name',
+      'asking_partner_vibe',
+      'complete',
+      'expired'
+    )),
+  initiator_dm_space_id text,
+  partner_dm_space_id text,
+  data jsonb not null default '{}',
+  couple_id text references couples(id) on delete set null,
+  created_at timestamptz default now(),
+  expires_at timestamptz not null
+);
+create index if not exists pairings_partner_a_idx on pairings (partner_a) where status != 'complete';
+create index if not exists pairings_status_idx on pairings (status) where status not in ('complete', 'expired');
+
+-- Auth tokens: magic-link tokens delivered via iMessage DM. Each partner
+-- gets their own token so sessions are per-person, not per-couple.
+create table if not exists auth_tokens (
+  token text primary key,
+  couple_id text not null references couples(id) on delete cascade,
+  phone text not null,
+  created_at timestamptz default now(),
+  expires_at timestamptz not null
+);
+create index if not exists auth_tokens_couple_idx on auth_tokens (couple_id);
+create index if not exists auth_tokens_expires_idx on auth_tokens (expires_at);
 
 create table if not exists saves (
   id uuid primary key default gen_random_uuid(),
   couple_id text not null references couples(id) on delete cascade,
-  linq_message_id text unique,
+  -- Photon iMessage message id (was linq_message_id). Unique to dedupe replays.
+  photon_message_id text unique,
   sender_handle text not null,
   kind text not null check (kind in ('text','link','image','voice','video','place')),
   raw_text text,
