@@ -15,7 +15,7 @@ create table if not exists saves (
   couple_id text not null references couples(id) on delete cascade,
   photon_message_id text unique,
   sender_handle text not null,
-  kind text not null check (kind in ('text','link','image','voice')),
+  kind text not null check (kind in ('text','link','image','voice','video','place')),
   raw_text text,
   source_url text,
   media_url text,
@@ -26,8 +26,19 @@ create table if not exists saves (
   embedding vector(1536),
   seen_by_partner boolean default false,
   subject_id uuid,
+  source_provider text,
+  place jsonb,
   created_at timestamptz default now()
 );
+
+-- Idempotent additions for older deployments that pre-date the columns above.
+alter table saves add column if not exists source_provider text;
+alter table saves add column if not exists place jsonb;
+do $$ begin
+  alter table saves drop constraint if exists saves_kind_check;
+  alter table saves add constraint saves_kind_check
+    check (kind in ('text','link','image','voice','video','place'));
+exception when others then null; end $$;
 
 create index if not exists saves_couple_created_idx on saves (couple_id, created_at desc);
 create index if not exists saves_embedding_idx on saves using ivfflat (embedding vector_cosine_ops) with (lists = 100);

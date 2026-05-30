@@ -2,10 +2,15 @@ import "server-only";
 import { supabase } from "./supabase";
 import { embed, transcribe } from "./openai";
 import { downloadMedia } from "./photon";
+import { classifyUrl } from "./sources";
+import { unfurl } from "./unfurl";
+import { extractAppleMaps, type Place } from "./extractors/apple-maps";
+import { classifySubject } from "./classify-subject";
 
 type EnrichableRow = {
   id: string;
-  kind: "text" | "link" | "image" | "voice";
+  couple_id: string;
+  kind: "text" | "link" | "image" | "voice" | "video" | "place";
   raw_text: string | null;
   source_url: string | null;
   media_url: string | null;
@@ -13,57 +18,60 @@ type EnrichableRow = {
   og_title: string | null;
   og_description: string | null;
   og_image: string | null;
+  source_provider: string | null;
+  place: Place | null;
+  subject_id: string | null;
 };
 
-/** Quick-and-dirty OG meta extractor. No HTML parser; deliberate v1 shortcut. */
-function pluck(html: string, regex: RegExp): string | null {
-  const m = html.match(regex);
-  return m ? m[1].trim() : null;
+/** Idempotently upsert a subject by (couple_id, name) and return its id. */
+async function getOrCreateSubject(
+  coupleId: string,
+  name: string
+): Promise<string | null> {
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  const { data: existing } = await supabase
+    .from("subjects")
+    .select("id")
+    .eq("couple_id", coupleId)
+    .ilike("name", trimmed)
+    .limit(1)
+    .maybeSingle();
+  if (existing?.id) return existing.id as string;
+
+  const { data: created, error } = await supabase
+    .from("subjects")
+    .insert({ couple_id: coupleId, name: trimmed })
+    .select("id")
+    .single();
+  if (error) {
+    console.error("[enrich] subject insert failed", error);
+    return null;
+  }
+  return created.id as string;
 }
 
-async function unfurl(url: string): Promise<{
-  og_title: string | null;
-  og_description: string | null;
-  og_image: string | null;
-}> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 5000);
-  try {
-    const res = await fetch(url, {
-      signal: ctrl.signal,
-      headers: { "user-agent": "Mozilla/5.0 (love-send-bot)" },
-      redirect: "follow",
-    });
-    if (!res.ok) return { og_title: null, og_description: null, og_image: null };
-    const html = (await res.text()).slice(0, 200_000);
-    return {
-      og_title:
-        pluck(html, /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i) ||
-        pluck(html, /<title>([^<]+)<\/title>/i),
-      og_description: pluck(
-        html,
-        /<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)["']/i
-      ),
-      og_image: pluck(
-        html,
-        /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i
-      ),
-    };
-  } catch {
-    return { og_title: null, og_description: null, og_image: null };
-  } finally {
-    clearTimeout(timer);
-  }
+async function listSubjectNames(coupleId: string): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("subjects")
+    .select("name")
+    .eq("couple_id", coupleId)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  if (error || !data) return [];
+  return data.map((r) => r.name as string);
 }
 
 /**
- * Fill in transcript / og_* / embedding for a save row.
+ * Fill in transcript / og_* / place / subject_id / embedding for a save row.
  * Idempotent — safe to re-run; uses the row's current state to decide what to do.
  */
 export async function enrich(saveId: string): Promise<void> {
   const { data: row, error } = await supabase
     .from("saves")
-    .select("id, kind, raw_text, source_url, media_url, transcript, og_title, og_description, og_image")
+    .select(
+      "id, couple_id, kind, raw_text, source_url, media_url, transcript, og_title, og_description, og_image, source_provider, place, subject_id"
+    )
     .eq("id", saveId)
     .single<EnrichableRow>();
   if (error || !row) {
@@ -84,16 +92,40 @@ export async function enrich(saveId: string): Promise<void> {
     }
   }
 
-  // 2) Link → OG unfurl.
-  if (row.kind === "link" && row.source_url && !row.og_title) {
-    const og = await unfurl(row.source_url);
-    if (og.og_title) updates.og_title = og.og_title;
-    if (og.og_description) updates.og_description = og.og_description;
-    if (og.og_image) updates.og_image = og.og_image;
+  // 2) Link → classify + unfurl + provider-specific extract.
+  let resolvedKind: EnrichableRow["kind"] = row.kind;
+  let resolvedProvider: string | null = row.source_provider;
+
+  if (row.source_url && !row.og_title && !row.place) {
+    const classified = classifyUrl(row.source_url);
+    if (classified) {
+      resolvedProvider = classified.provider;
+      updates.source_provider = classified.provider;
+
+      if (classified.provider === "apple_maps") {
+        const place = extractAppleMaps(row.source_url);
+        if (place) {
+          updates.place = place;
+          updates.kind = "place";
+          resolvedKind = "place";
+          if (place.name) updates.og_title = place.name;
+          if (place.address) updates.og_description = place.address;
+        }
+      } else {
+        const u = await unfurl(row.source_url);
+        if (u.title) updates.og_title = u.title;
+        if (u.description) updates.og_description = u.description;
+        if (u.image) updates.og_image = u.image;
+        if (classified.content === "video") {
+          updates.kind = "video";
+          resolvedKind = "video";
+        }
+      }
+    }
   }
 
-  // 3) Embed the best text we have.
-  const candidate =
+  // 3) Subject classification — only if we have meaningful text and no subject yet.
+  const subjectText =
     (updates.transcript as string | undefined) ??
     row.transcript ??
     row.raw_text ??
@@ -101,18 +133,44 @@ export async function enrich(saveId: string): Promise<void> {
     row.og_title ??
     (updates.og_description as string | undefined) ??
     row.og_description ??
-    row.source_url ??
     "";
-  if (candidate) {
+
+  if (!row.subject_id && subjectText.trim().length > 0) {
     try {
-      const vec = await embed(candidate);
+      const existing = await listSubjectNames(row.couple_id);
+      const guess = await classifySubject({
+        text: subjectText,
+        provider: resolvedProvider,
+        existing,
+      });
+      if (guess?.name) {
+        const subjectId = await getOrCreateSubject(row.couple_id, guess.name);
+        if (subjectId) updates.subject_id = subjectId;
+      }
+    } catch (e) {
+      console.error("[enrich] subject classify failed", e);
+    }
+  }
+
+  // 4) Embed the best text we have.
+  const embedCandidate =
+    subjectText ||
+    (updates.og_title as string | undefined) ||
+    row.source_url ||
+    "";
+  if (embedCandidate) {
+    try {
+      const vec = await embed(embedCandidate);
       if (vec) updates.embedding = vec;
     } catch (e) {
       console.error("[enrich] embed failed", e);
     }
   }
 
+  // Suppress no-op writes.
   if (Object.keys(updates).length === 0) return;
+  // resolvedKind is captured above for downstream callers; not written separately.
+  void resolvedKind;
 
   const { error: updErr } = await supabase.from("saves").update(updates).eq("id", saveId);
   if (updErr) console.error("[enrich] update failed", updErr);
