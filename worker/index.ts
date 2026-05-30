@@ -98,6 +98,51 @@ async function forward(payload: {
   }
 }
 
+// ─── Auth: generate login URLs via Next.js API ───────────────────────────
+async function getLoginUrl(coupleId: string, phone: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${INTERNAL_WEBHOOK_URL.replace("/api/photon/webhook", "/api/auth/generate-token")}`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${INTERNAL_WEBHOOK_SECRET}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ coupleId, phone }),
+    });
+    if (!res.ok) return null;
+    const json = await res.json() as { url: string };
+    return json.url;
+  } catch {
+    return null;
+  }
+}
+
+const DASHBOARD_RE = /\b(dashboard|bucket|link|log\s*in)\b/i;
+
+/**
+ * Handle "dashboard" keyword in a DM from a known partner.
+ * Returns true if consumed.
+ */
+async function handleDashboardRequest(senderId: string, spaceId: string, text: string): Promise<boolean> {
+  if (!DASHBOARD_RE.test(text)) return false;
+
+  const { data: couple } = await supabase
+    .from("couples")
+    .select("id")
+    .or(`partner_a.eq.${senderId},partner_b.eq.${senderId}`)
+    .maybeSingle<{ id: string }>();
+
+  if (!couple) return false;
+
+  const url = await getLoginUrl(couple.id, senderId);
+  if (url) {
+    await sendDM(spaceId, `here's your dashboard — tap to open:\n${url}`);
+  } else {
+    await sendDM(spaceId, "something went wrong generating your link — try again in a sec.");
+  }
+  return true;
+}
+
 // ─── Conversational pairing state machine ─────────────────────────────────
 type PairingRow = {
   code: string;
@@ -306,6 +351,16 @@ async function createCoupleAndGroup(
     await space.send(`${iName} told me you're mostly saving ${iVibe}, ${pName} mentioned ${pVibe} — i'll keep an eye out for both.\n\nask me anything, anytime.`);
   }
 
+  // DM each partner their personal dashboard link.
+  const aUrl = await getLoginUrl(coupleId, pairing.partner_a);
+  const bUrl = await getLoginUrl(coupleId, pairing.partner_b!);
+  if (aUrl && pairing.initiator_dm_space_id) {
+    await sendDM(pairing.initiator_dm_space_id, `your dashboard is ready:\n${aUrl}`);
+  }
+  if (bUrl && pairing.partner_dm_space_id) {
+    await sendDM(pairing.partner_dm_space_id, `your dashboard is ready:\n${bUrl}`);
+  }
+
   console.log("[worker] couple created", coupleId, "space", space.id);
 }
 
@@ -400,8 +455,11 @@ async function main() {
 
       rememberMessage(messageId, message as unknown as CachedMessage["msg"]);
 
-      // DMs: try pairing flow first. If consumed, don't forward.
+      // DMs: try dashboard keyword, then pairing flow.
       if (spaceType === "dm" && content.type === "text" && content.text) {
+        if (await handleDashboardRequest(senderId, spaceId, content.text)) {
+          continue;
+        }
         if (await handlePairingMessage(senderId, spaceId, content.text)) {
           continue;
         }

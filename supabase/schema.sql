@@ -41,6 +41,18 @@ create table if not exists pairings (
 create index if not exists pairings_partner_a_idx on pairings (partner_a) where status != 'complete';
 create index if not exists pairings_status_idx on pairings (status) where status not in ('complete', 'expired');
 
+-- Auth tokens: magic-link tokens delivered via iMessage DM. Each partner
+-- gets their own token so sessions are per-person, not per-couple.
+create table if not exists auth_tokens (
+  token text primary key,
+  couple_id text not null references couples(id) on delete cascade,
+  phone text not null,
+  created_at timestamptz default now(),
+  expires_at timestamptz not null
+);
+create index if not exists auth_tokens_couple_idx on auth_tokens (couple_id);
+create index if not exists auth_tokens_expires_idx on auth_tokens (expires_at);
+
 create table if not exists saves (
   id uuid primary key default gen_random_uuid(),
   couple_id text not null references couples(id) on delete cascade,
