@@ -13,7 +13,6 @@ function LogoMark({ size }: { size: number }) {
         alt=""
         fill
         sizes={`${size}px`}
-        preload
         className="scale-[1.42] object-cover object-top"
       />
     </span>
